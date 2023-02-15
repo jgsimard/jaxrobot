@@ -134,5 +134,12 @@ dmypy.json
 # vscode
 .vscode
 
+# scalene profiler
+profile.html
+profile.json
+
+# pycharm
+.idea
+
 # this project
 testing.ipynb
