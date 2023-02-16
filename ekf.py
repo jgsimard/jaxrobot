@@ -12,12 +12,26 @@ from utils import plot_covariance_ellipse
 
 @jdc.pytree_dataclass
 class GaussianState:
+    """
+    Attributes:
+        x (jnp.ndarray): State Vector
+        P (jnp.ndarray): Covariance Matrix
+    """
+
     x: jnp.ndarray
     P: jnp.ndarray
 
 
 @jdc.pytree_dataclass
 class ExtendedKalmanFilter:
+    """
+    Attributes:
+        R (jnp.ndarray): Observation Covariance Matrix
+        Q (jnp.ndarray): Process Covariance Matrix
+        F (Callable): State Transition Function
+        H (Callable): Observation Model
+    """
+
     R: jnp.ndarray
     Q: jnp.ndarray
     F: Callable[[jnp.ndarray, jnp.ndarray, float], jnp.ndarray]
@@ -67,7 +81,6 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    @jax.jit
     def motion_model(x: jnp.ndarray, u: jnp.ndarray, dt: float):
         # State Vector [x y yaw v]
         # Input Vector [new_v yaw_dot]
@@ -90,35 +103,31 @@ if __name__ == "__main__":
         return x[:2, 0].reshape(2, 1)
 
     # Covariance for EKF simulation
-    Q = (
-        np.diag(
-            [
-                0.1,  # variance of location on x-axis
-                0.1,  # variance of location on y-axis
-                np.deg2rad(1.0),  # variance of yaw angle
-                1.0,  # variance of velocity
-            ]
-        )
-        ** 2
-    )  # predict state covariance
-    R = np.diag([1.0, 1.0]) ** 2  # Observation x,y position covariance
+    # State Vector [x y yaw v]
+    Q = jnp.diag(jnp.array([0.1, 0.1, np.deg2rad(1.0), 1.0])) ** 2
+    R = jnp.diag(jnp.array([1.0, 1.0])) ** 2  # Observation x,y position covariance
     ekf = ExtendedKalmanFilter(R, Q, motion_model, observation_model)
 
     #  Simulation parameter
-    INPUT_NOISE = np.diag([1.0, np.deg2rad(30.0)]) ** 2
-    GPS_NOISE = np.diag([0.5, 0.5]) ** 2
+    INPUT_NOISE = jnp.array(np.diag([1.0, np.deg2rad(30.0)]) ** 2)
+    GPS_NOISE = jnp.array(np.diag([0.5, 0.5]) ** 2)
     DT = 0.1  # time tick [s]
     SIM_TIME = 50.0  # simulation time [s]
+    seed = 1234
+    rng = jax.random.PRNGKey(seed)
 
-    show_animation = True
+    show_animation = False
 
-    def observation(xTrue, xd, u):
+    @jax.jit
+    def observation(xTrue, xd, u, rng):
         xTrue = motion_model(xTrue, u, DT)
+
+        key_obs, key_u = jax.random.split(rng, 2)
         # add noise to gps x-y
-        z = observation_model(xTrue) + GPS_NOISE @ np.random.randn(2, 1)
+        z = observation_model(xTrue) + GPS_NOISE @ jax.random.normal(key_obs, (2, 1))
 
         # add noise to input
-        ud = u + INPUT_NOISE @ np.random.randn(2, 1)
+        ud = u + INPUT_NOISE @ jax.random.normal(key_u, (2, 1))
 
         xd = motion_model(xd, ud, DT)
 
@@ -127,26 +136,27 @@ if __name__ == "__main__":
     print(__file__ + " start!!")
 
     # State Vector [x y yaw v]'
-    xTrue = np.zeros((4, 1))
-    gs_est = GaussianState(np.zeros((4, 1)), np.eye(4))
+    xTrue = jnp.zeros((4, 1))
+    gs_est = GaussianState(jnp.zeros((4, 1)), jnp.eye(4))
     xDR = np.zeros((4, 1))  # Dead reckoning
 
     # history
     hxEst = gs_est.x
     hxTrue = xTrue
     hxDR = xTrue
-    hz = np.zeros((2, 1))
+    hz = jnp.zeros((2, 1))
+    u = jnp.array([[1.0], [0.1]])
 
     t0 = time.time()
     sim_time = 0.0
     while sim_time <= SIM_TIME:
-        # skip compilation step in time tracking
+        # skip compilation step in time tracking : ~500 ms
         if sim_time == DT:
             t0 = time.time()
         sim_time += DT
-        u = np.array([[1.0], [0.1]])
 
-        xTrue, z, xDR, ud = observation(xTrue, xDR, u)
+        rng, obs_key = jax.random.split(rng, 2)
+        xTrue, z, xDR, ud = observation(xTrue, xDR, u, obs_key)
 
         gs_pred = ekf.predict(gs_est, ud, DT)
         gs_est = ekf.update(gs_pred, z)
@@ -171,4 +181,4 @@ if __name__ == "__main__":
             plt.axis("equal")
             plt.grid()
             plt.pause(0.01)
-    print(time.time() - t0)
+    print(f"{(time.time() - t0) * 1000:.3f} ms")
