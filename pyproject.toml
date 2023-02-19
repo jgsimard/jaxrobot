@@ -20,5 +20,8 @@ line-length = 100
 # flake8-use-pathlib (PTH)
 select = ["E", "F", "B", "I", "PL", "PLC", "PLE", "PLR", "PLW", "W", "UP", "YTT", "S", "FBT", "C4", "ICN", "PIE", "Q", "SIM", "TID", "ARG", "PTH"]
 
+# Never enforce `E501` (line length violations).
+ignore = ["PLR0913"]
+
 [tool.black]
 line-length = 100

@@ -1,5 +1,5 @@
+import math
 from collections.abc import Callable
-from functools import partial
 
 import jax
 import jax_dataclasses as jdc
@@ -8,9 +8,14 @@ from jax import numpy as jnp
 
 from utils import GaussianState
 
+#  UKF Parameter
+ALPHA = 0.001
+BETA = 2
+KAPPA = 0
+
 
 @jdc.pytree_dataclass
-class ExtendedKalmanFilter:
+class UnscentedKalmanFilter:
     """
     Attributes:
         R (jnp.ndarray): Observation Covariance Matrix
@@ -23,43 +28,91 @@ class ExtendedKalmanFilter:
     Q: jnp.ndarray
     F: Callable[[jnp.ndarray, jnp.ndarray, float], jnp.ndarray]
     H: Callable[[jnp.ndarray], jnp.ndarray]
+    alpha: float = 0.001
+    beta: float = 2.0
+    kappa: float = 0.0
+    # mean_weights: jnp.ndarray
+    # cov_weights: jnp.ndarray
 
-    def predict(self, estimate: GaussianState, u: jnp.ndarray, dt: float) -> GaussianState:
-        return _predict(estimate, u, dt, self.F, self.Q)
 
-    def update(self, prediction: GaussianState, z: jnp.ndarray) -> GaussianState:
-        return _update(prediction, z, self.H, self.R)
+def generate_sigma_points(state: GaussianState, gamma) -> jnp.ndarray:
+    n = len(state.x)
+    sigma_points = np.empty((2 * n + 1, n, 1))
+    mean = state.x.squeeze()
+    sigma_points[0, :, 0] = mean
+    Psigma = jax.scipy.linalg.sqrtm(state.P)
+    for i in range(n):
+        sigma_points[i + 1, :, 0] = mean + gamma * Psigma[i]
+
+    for i in range(n):
+        sigma_points[i + n + 1, :, 0] = mean - gamma * Psigma[i]
+
+    return jnp.array(sigma_points)
 
 
-@partial(jax.jit, static_argnums=(3,))
-def _predict(
-    estimate: GaussianState,
+def sigma_weights(n: int) -> (jnp.ndarray, jnp.ndarray):
+    mean_weights = np.empty(2 * n + 1)
+    cov_weights = np.empty(2 * n + 1)
+    _lambda = ALPHA**2 * (n + KAPPA) - n
+    gamma = math.sqrt(n + _lambda)
+    mean_weights[0] = _lambda / (n + _lambda)
+    cov_weights[0] = _lambda / (n + _lambda) + (1 - ALPHA**2 + BETA)
+    for i in range(2 * n):
+        mean_weights[i + 1] = cov_weights[i + 1] = 1.0 / (2 * (n + _lambda))
+    return jnp.array(mean_weights), jnp.array(cov_weights), gamma
+
+
+def unscented_update(
+    points: jnp.ndarray,
+    mean_weights: jnp.ndarray,
+    cov_weights: jnp.ndarray,
+    base_cov: jnp.ndarray,
+) -> GaussianState:
+    mean = (points.squeeze() * mean_weights[:, None]).sum(axis=0)
+    dx = (points.squeeze() - mean[None, :]).squeeze()
+    cov = base_cov + jnp.einsum("ni,nj,n->ij", dx, dx, cov_weights)
+    return GaussianState(x=mean, P=cov)
+
+
+def estimation(
+    state: GaussianState,
     u: jnp.ndarray,
-    dt: float,
-    f: Callable[[jnp.ndarray, jnp.ndarray, float], jnp.ndarray],
-    q: jnp.ndarray,
-) -> GaussianState:
-    x_pred = f(estimate.x, u, dt)
-    jf = jax.jacobian(f, argnums=0)(x_pred, u, dt).squeeze()
-    p_pred = jf @ estimate.P @ jf.T + q
-    return GaussianState(x_pred, p_pred)
-
-
-@partial(jax.jit, static_argnums=(2,))
-def _update(
-    prediction: GaussianState,
     z: jnp.ndarray,
-    h: Callable[[jnp.ndarray], jnp.ndarray],
-    r: jnp.ndarray,
+    R,
+    Q,
+    F,
+    H,
+    dt,
+    mean_weights,
+    cov_weights,
+    gamma,
 ) -> GaussianState:
-    z_pred = h(prediction.x)
-    y = z - z_pred
-    jh = jax.jacobian(h, argnums=0)(prediction.x).squeeze()
-    s = jh @ prediction.P @ jh.T + r
-    kalman_gain = prediction.P @ jh.T @ jnp.linalg.inv(s)
+    # mean_weights, cov_weights = sigma_weights(len(state.x))
+
+    # predict
+    sigma_points = generate_sigma_points(state, gamma)
+    vF = jax.vmap(F, (0, None, None), 0)  # vectorize
+    state_sigma_points = vF(sigma_points, u, dt)
+    # state_sigma_points = F(sigma_points, u, dt)
+    x_pred = unscented_update(state_sigma_points, mean_weights, cov_weights, base_cov=Q)
+
+    # update
+    pred_sigma_points = generate_sigma_points(x_pred, gamma)
+    vH = jax.vmap(H, (0,), 0)
+    z_sigma_points = vH(sigma_points)
+    z_pred = unscented_update(z_sigma_points, mean_weights, cov_weights, base_cov=R)
+
+    cov_ = jnp.einsum(
+        "ni,nj,n->ij",
+        pred_sigma_points.squeeze() - x_pred.x[None, :],
+        z_sigma_points.squeeze() - z_pred.x[None, :],
+        cov_weights,
+    )
+    kalman_gain = cov_ @ jnp.linalg.inv(z_pred.P)
+    y = z.squeeze() - z_pred.x
     return GaussianState(
-        x=prediction.x + kalman_gain @ y,
-        P=(jnp.eye(len(prediction.x)) - kalman_gain @ jh) @ prediction.P,
+        x=x_pred.x + kalman_gain @ y,
+        P=x_pred.P - kalman_gain @ z_pred.P @ kalman_gain.T,
     )
 
 
@@ -96,7 +149,8 @@ if __name__ == "__main__":
     # State Vector [x y yaw v]
     Q = jnp.diag(jnp.array([0.1, 0.1, np.deg2rad(1.0), 1.0])) ** 2
     R = jnp.diag(jnp.array([1.0, 1.0])) ** 2  # Observation x,y position covariance
-    ekf = ExtendedKalmanFilter(R=R, Q=Q, F=motion_model, H=observation_model)
+    ukf = UnscentedKalmanFilter(R=R, Q=Q, F=motion_model, H=observation_model)
+    mean_weights, cov_weights, gamma = sigma_weights(4)
 
     #  Simulation parameter
     INPUT_NOISE = jnp.array(np.diag([1.0, np.deg2rad(30.0)]) ** 2)
@@ -108,7 +162,7 @@ if __name__ == "__main__":
 
     show_animation = True
 
-    @jax.jit
+    # @jax.jit
     def observation(xTrue, xd, command, rng):
         xTrue = motion_model(xTrue, command, DT)
         key_obs, key_u = jax.random.split(rng, 2)
@@ -144,11 +198,25 @@ if __name__ == "__main__":
         rng, obs_key = jax.random.split(rng, 2)
         xTrue, z, xDR, ud = observation(xTrue, xDR, u, obs_key)
 
-        gs_pred = ekf.predict(gs_est, ud, DT)
-        gs_est = ekf.update(gs_pred, z)
+        # gs_pred = ekf.predict(gs_est, ud, DT)
+        # gs_est = ekf.update(gs_pred, z)
+        gs_est = estimation(
+            gs_est,
+            u,
+            z,
+            R,
+            Q,
+            motion_model,
+            observation_model,
+            DT,
+            mean_weights,
+            cov_weights,
+            gamma,
+        )
 
         # store data history
-        hxEst = np.hstack((hxEst, gs_est.x))
+        print(hxEst.shape, gs_est.x.shape)
+        hxEst = np.hstack((hxEst, gs_est.x[:, None]))
         hxDR = np.hstack((hxDR, xDR))
         hxTrue = np.hstack((hxTrue, xTrue))
         hz = np.hstack((hz, z))
@@ -163,7 +231,8 @@ if __name__ == "__main__":
             plt.plot(hxTrue[0, :].flatten(), hxTrue[1, :].flatten(), "-b")
             plt.plot(hxDR[0, :].flatten(), hxDR[1, :].flatten(), "-k")
             plt.plot(hxEst[0, :].flatten(), hxEst[1, :].flatten(), "-r")
-            plot_covariance_ellipse(gs_est.x, gs_est.P)
+            print(hxEst.shape)
+            plot_covariance_ellipse(gs_est.x[:, None], gs_est.P)
             plt.axis("equal")
             plt.grid()
             plt.pause(0.01)

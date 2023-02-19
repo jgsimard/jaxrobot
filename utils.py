@@ -1,27 +1,32 @@
 import math
 
+import jax_dataclasses as jdc
 import matplotlib.pyplot as plt
 import numpy as np
+from jax import numpy as jnp
 from scipy.spatial.transform import Rotation as Rot
 
 
-def rot_mat_2d(angle):
+@jdc.pytree_dataclass
+class GaussianState:
+    """
+    Attributes:
+        x (jnp.ndarray): State Vector
+        P (jnp.ndarray): Covariance Matrix
+    """
+
+    x: jnp.ndarray
+    P: jnp.ndarray
+
+
+def rot_mat_2d(angle: float) -> np.ndarray:
     """Create 2D rotation matrix from an angle
     Parameters.
-
-    ----------
-    angle :
-    Returns
-    -------
-    A 2D rotation matrix
-    Examples
-    --------
-    >>> angle_mod(-4.0).
     """
     return Rot.from_euler("z", angle).as_matrix()[0:2, 0:2]
 
 
-def plot_covariance_ellipse(xy, variance_xy):  # pragma: no cover
+def plot_covariance_ellipse(xy: np.ndarray, variance_xy: np.ndarray) -> None:  # pragma: no cover
     p_xy = variance_xy[0:2, 0:2]
     eigval, eigvec = np.linalg.eig(p_xy)
 
