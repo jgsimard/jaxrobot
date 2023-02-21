@@ -38,14 +38,16 @@ class UnscentedKalmanFilter:
         object.__setattr__(self, "gamma", gamma)
 
     def _sigma_weights(self, n: int) -> (jnp.ndarray, jnp.ndarray):
-        mean_weights = np.empty(2 * n + 1)
-        cov_weights = np.empty(2 * n + 1)
         _lambda = self.alpha**2 * (n + self.kappa) - n
-        gamma = math.sqrt(n + _lambda)
+        v = 1.0 / (2 * (n + _lambda))
+        mean_weights = np.full(2 * n + 1, v)
+        cov_weights = np.full(2 * n + 1, v)
+        # special cases
         mean_weights[0] = _lambda / (n + _lambda)
         cov_weights[0] = _lambda / (n + _lambda) + (1 - self.alpha**2 + self.beta)
-        for i in range(1, 2 * n + 1):
-            mean_weights[i] = cov_weights[i] = 1.0 / (2 * (n + _lambda))
+
+        gamma = math.sqrt(n + _lambda)
+
         return jnp.array(mean_weights), jnp.array(cov_weights), gamma
 
     def estimate(self, state, u, z, dt):
@@ -184,8 +186,8 @@ if __name__ == "__main__":
     seed = 1234
     rng = jax.random.PRNGKey(seed)
 
-    # show_animation = True
-    show_animation = False
+    show_animation = True
+    # show_animation = False
 
     @jax.jit
     def observation(xTrue, xd, command, rng):

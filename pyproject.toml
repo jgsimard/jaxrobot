@@ -2,26 +2,34 @@
 line-length = 100
 
 # Enable
-# flake8-bugbear (`B`),
-# Isort (I)
-# Pylint(PL, PLC, PLE, PLR, PLW),
-# pycodestyle(E, W)
-# pyupgrade (UP)
-# flake8-2020 (YTT)
-# flake8-bandit (S)
-# flake8-boolean-trap (FBT)
-# flake8-comprehensions (C4)
-# flake8-import-conventions (ICN)
-# flake8-pie (PIE)
-# flake8-quotes (Q)
-# flake8-simplify (SIM)
-# flake8-tidy-imports (TID)
-# flake8-unused-arguments (ARG)
-# flake8-use-pathlib (PTH)
-select = ["E", "F", "B", "I", "PL", "PLC", "PLE", "PLR", "PLW", "W", "UP", "YTT", "S", "FBT", "C4", "ICN", "PIE", "Q", "SIM", "TID", "ARG", "PTH"]
+select = [
+    "E", # pycodestyle
+    "F", # flake8
+    "B", # flake8-bugbear
+    "I", # Isort
+    "PL", # Pylint
+    "PLC", # Pylint Convention
+    "PLE", # Pylint Error
+    "PLR", # Pylint Refactor
+    "PLW", # Pylint Warning
+    "W",  # pycodestyle
+    "UP", # pyupgrade
+    "YTT", # flake8-2020
+    "S", # flake8-bandit
+    "FBT", # flake8-boolean-trap
+    "C4", # flake8-comprehensions
+    "ICN", # flake8-import-conventions
+    "PIE", # flake8-pie
+    "Q", # flake8-quotes
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "ARG", # flake8-unused-arguments
+    "PTH"# flake8-use-pathlib
+]
 
-# Never enforce `E501` (line length violations).
-ignore = ["PLR0913"]
+ignore = [
+    "PLR0913" # too-many-arguments
+]
 
 [tool.black]
 line-length = 100
