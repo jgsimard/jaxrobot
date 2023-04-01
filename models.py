@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 
+import jax.random
 import jax_dataclasses as jdc
 from jax import numpy as jnp
+
+from utils import wrap
 
 
 class MeasurementModel(ABC):
@@ -21,7 +24,7 @@ class MotionModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, x: jnp.ndarray, u: jnp.ndarray, dt: float) -> jnp.ndarray:
+    def sample(self, x: jnp.ndarray, u: jnp.ndarray, dt: float, rng: jnp.ndarray) -> jnp.ndarray:
         raise NotImplementedError
 
     @abstractmethod
@@ -64,19 +67,58 @@ class Velocity(MotionModel):
     a5: float
     a6: float
 
-    @abstractmethod
     def predict(self, x: jnp.ndarray, u: jnp.ndarray, dt: float) -> jnp.ndarray:
-        raise NotImplementedError
+        theta = x[2]
+        # control
+        v = u[0]
+        w = u[1]
 
-    @abstractmethod
-    def sample(self, x: jnp.ndarray, u: jnp.ndarray, dt: float) -> jnp.ndarray:
-        raise NotImplementedError
+        return jnp.ndarray(
+            [
+                [x[0] + v / w * (-jnp.sin(theta) + jnp.sin(theta + w * dt))],
+                [x[1] + v / w * (jnp.cos(theta) - jnp.cos(theta + w * dt))],
+                [wrap(x[2] + w * dt)],
+            ],
+        )
 
-    @abstractmethod
+    def sample(self, x: jnp.ndarray, u: jnp.ndarray, dt: float, rng: jnp.ndarray) -> jnp.ndarray:
+        theta = x[2]
+        # control
+        v = u[0]
+        w = u[1]
+
+        v2 = v**2
+        w2 = w**2
+
+        key_v, key_w, key_gamma = jax.random.split(rng, 3)
+        v_noisy = v + jnp.sqrt(self.a1 * v2 + self.a2 * w2) * jax.random.normal(key_v)
+        w_noisy = w + jnp.sqrt(self.a3 * v2 + self.a4 * w2) * jax.random.normal(key_w)
+        gamma_noisy = jnp.sqrt(self.a5 * v2 + self.a6 * w2) * jax.random.normal(key_gamma)
+
+        return jnp.ndarray(
+            [
+                [x[0] + v_noisy / w_noisy * (-jnp.sin(theta) + jnp.sin(theta + w_noisy * dt))],
+                [x[1] + v_noisy / w_noisy * (jnp.cos(theta) - jnp.cos(theta + w_noisy * dt))],
+                [wrap(x[2] + w_noisy * dt + gamma_noisy * dt)],
+            ],
+        )
+
     def noise_control_space(self, u: jnp.ndarray) -> jnp.ndarray:
         raise NotImplementedError
 
 
 class RangeBearing(MeasurementModel):
-    def predict(self, x: jnp.ndarray, landmark: jnp.ndarray | None) -> jnp.ndarray:
-        raise NotImplementedError
+    def predict(self, x: jnp.ndarray, landmark: jnp.ndarray) -> jnp.ndarray:
+        # state
+        x_x = x[0]
+        x_y = x[1]
+        x_theta = x[2]
+        # landmark
+        l_x = landmark[0]
+        l_y = landmark[1]
+
+        q = (l_x - x_x) ** 2 + (l_y - x_y) ** 2
+        range_ = q.sqrt()
+
+        bearing = jnp.arctan2(l_y - x_y, l_x - x_x) - x_theta
+        return jnp.array([range_, bearing])

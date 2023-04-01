@@ -166,7 +166,7 @@ if __name__ == "__main__":
     seed = 1234
     rng = jax.random.PRNGKey(seed)
 
-    show_animation = True
+    show_animation = False
 
     @jax.jit
     def observation(

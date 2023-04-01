@@ -86,3 +86,10 @@ def plot(history: History, gs: GaussianState) -> None:
     plt.axis("equal")
     plt.grid()
     plt.pause(0.001)
+
+
+def wrap(x: jnp.ndarray) -> jnp.ndarray:
+    """
+    Wraps to [-pi, pi]
+    """
+    return (x + jnp.pi) % (2 * jnp.pi) - jnp.pi
